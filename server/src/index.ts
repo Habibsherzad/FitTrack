@@ -1,5 +1,6 @@
 import cors from "cors";
 import express, { type Request, type Response } from "express";
+import { lineCalories } from "./calories";
 import { pool, USER_ID } from "./db";
 
 const app = express();
@@ -200,36 +201,68 @@ app.get("/api/history", async (req, res) => {
   res.json({ history });
 });
 
+function isUnit(value: unknown): value is "g" | "piece" {
+  return value === "g" || value === "piece";
+}
+
+function mapProduct(row: Record<string, unknown>) {
+  const unit = row.unit === "g" ? "g" : "piece";
+  return {
+    id: num(row.id),
+    name: String(row.name),
+    calories: num(row.calories),
+    unit,
+  };
+}
+
 app.get("/api/food-items", async (_req, res) => {
   const [rows] = await pool.query(
-    `SELECT id, name, calories
+    `SELECT id, name, calories, unit
      FROM food_items
      WHERE user_id = :id
      ORDER BY name`,
     { id: USER_ID },
   );
   res.json({
-    items: (rows as Array<Record<string, unknown>>).map((row) => ({
-      id: num(row.id),
-      name: String(row.name),
-      calories: num(row.calories),
-    })),
+    items: (rows as Array<Record<string, unknown>>).map(mapProduct),
   });
 });
 
 app.post("/api/food-items", async (req, res) => {
   const name = String(req.body.name || "").trim();
   const calories = Number(req.body.calories);
+  const unit = isUnit(req.body.unit) ? req.body.unit : "piece";
   if (!name || !Number.isInteger(calories) || calories < 0 || calories > 5000) {
     res.status(400).json({ error: "Need a food name and calories 0–5000." });
     return;
   }
   const [result] = await pool.query(
-    `INSERT INTO food_items (user_id, name, calories)
-     VALUES (:userId, :name, :calories)`,
-    { userId: USER_ID, name, calories },
+    `INSERT INTO food_items (user_id, name, calories, unit)
+     VALUES (:userId, :name, :calories, :unit)`,
+    { userId: USER_ID, name, calories, unit },
   );
   res.status(201).json({ id: Number((result as { insertId: number }).insertId) });
+});
+
+app.put("/api/food-items/:id", async (req, res) => {
+  const name = String(req.body.name || "").trim();
+  const calories = Number(req.body.calories);
+  const unit = isUnit(req.body.unit) ? req.body.unit : "piece";
+  if (!name || !Number.isInteger(calories) || calories < 0 || calories > 5000) {
+    res.status(400).json({ error: "Need a food name and calories 0–5000." });
+    return;
+  }
+  const [result] = await pool.query(
+    `UPDATE food_items
+     SET name = :name, calories = :calories, unit = :unit
+     WHERE id = :id AND user_id = :userId`,
+    { name, calories, unit, id: Number(req.params.id), userId: USER_ID },
+  );
+  if (Number((result as { affectedRows: number }).affectedRows) === 0) {
+    res.status(404).json({ error: "Product not found." });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 app.delete("/api/food-items/:id", async (req, res) => {
@@ -238,6 +271,323 @@ app.delete("/api/food-items/:id", async (req, res) => {
     { id: Number(req.params.id), userId: USER_ID },
   );
   res.json({ ok: true });
+});
+
+app.post("/api/food-items/:id/log", async (req, res) => {
+  const meal = req.body.meal;
+  const amount = Number(req.body.amount);
+  const eatenOn = todayIso(req.body.eatenOn);
+  if (!isMeal(meal) || !(amount > 0)) {
+    res.status(400).json({ error: "Need a meal and an amount greater than 0." });
+    return;
+  }
+  const [rows] = await pool.query(
+    `SELECT id, name, calories, unit FROM food_items WHERE id = :id AND user_id = :userId`,
+    { id: Number(req.params.id), userId: USER_ID },
+  );
+  const product = (rows as Array<Record<string, unknown>>)[0];
+  if (!product) {
+    res.status(404).json({ error: "Product not found." });
+    return;
+  }
+  const unit = product.unit === "g" ? "g" : "piece";
+  const calories = lineCalories(num(product.calories), unit, amount);
+  const label = unit === "g" ? `${product.name} (${amount} g)` : `${product.name} × ${amount}`;
+  const [result] = await pool.query(
+    `INSERT INTO food_entries (user_id, food_item_id, name, calories, meal, eaten_on)
+     VALUES (:userId, :foodItemId, :name, :calories, :meal, :eatenOn)`,
+    {
+      userId: USER_ID,
+      foodItemId: num(product.id),
+      name: label,
+      calories,
+      meal,
+      eatenOn,
+    },
+  );
+  res.status(201).json({ id: Number((result as { insertId: number }).insertId), calories });
+});
+
+type MealLineInput = { foodItemId: number; amount: number };
+
+async function loadMealSet(id: number) {
+  const [setRows] = await pool.query(
+    `SELECT id, name FROM meal_sets WHERE id = :id AND user_id = :userId`,
+    { id, userId: USER_ID },
+  );
+  const mealSet = (setRows as Array<Record<string, unknown>>)[0];
+  if (!mealSet) {
+    return null;
+  }
+  const [lineRows] = await pool.query(
+    `SELECT l.id, l.food_item_id AS foodItemId, l.amount, fi.name, fi.calories, fi.unit
+     FROM meal_set_lines l
+     JOIN food_items fi ON fi.id = l.food_item_id
+     WHERE l.meal_set_id = :id
+     ORDER BY l.id`,
+    { id },
+  );
+  const lines = (lineRows as Array<Record<string, unknown>>).map((row) => {
+    const unit = row.unit === "g" ? "g" : "piece";
+    const amount = num(row.amount);
+    return {
+      id: num(row.id),
+      foodItemId: num(row.foodItemId),
+      name: String(row.name),
+      amount,
+      unit,
+      calories: num(row.calories),
+      lineKcal: lineCalories(num(row.calories), unit, amount),
+    };
+  });
+  return {
+    id: num(mealSet.id),
+    name: String(mealSet.name),
+    calories: lines.reduce((sum, line) => sum + line.lineKcal, 0),
+    lines,
+  };
+}
+
+async function replaceMealLines(mealSetId: number, lines: MealLineInput[]) {
+  await pool.query(`DELETE FROM meal_set_lines WHERE meal_set_id = :id`, { id: mealSetId });
+  for (const line of lines) {
+    const amount = Number(line.amount);
+    const foodItemId = Number(line.foodItemId);
+    if (!foodItemId || !(amount > 0)) {
+      continue;
+    }
+    const [owned] = await pool.query(
+      `SELECT id FROM food_items WHERE id = :id AND user_id = :userId`,
+      { id: foodItemId, userId: USER_ID },
+    );
+    if (!(owned as unknown[]).length) {
+      continue;
+    }
+    await pool.query(
+      `INSERT INTO meal_set_lines (meal_set_id, food_item_id, amount)
+       VALUES (:mealSetId, :foodItemId, :amount)`,
+      { mealSetId, foodItemId, amount },
+    );
+  }
+}
+
+app.get("/api/meal-sets", async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id FROM meal_sets WHERE user_id = :userId ORDER BY name`,
+    { userId: USER_ID },
+  );
+  const sets = [];
+  for (const row of rows as Array<{ id: number }>) {
+    const loaded = await loadMealSet(num(row.id));
+    if (loaded) {
+      sets.push(loaded);
+    }
+  }
+  res.json({ sets });
+});
+
+app.post("/api/meal-sets", async (req, res) => {
+  const name = String(req.body.name || "").trim();
+  const lines = Array.isArray(req.body.lines) ? (req.body.lines as MealLineInput[]) : [];
+  if (!name) {
+    res.status(400).json({ error: "Need a meal set name." });
+    return;
+  }
+  const [result] = await pool.query(
+    `INSERT INTO meal_sets (user_id, name) VALUES (:userId, :name)`,
+    { userId: USER_ID, name },
+  );
+  const id = Number((result as { insertId: number }).insertId);
+  await replaceMealLines(id, lines);
+  res.status(201).json(await loadMealSet(id));
+});
+
+app.put("/api/meal-sets/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await loadMealSet(id);
+  if (!existing) {
+    res.status(404).json({ error: "Meal set not found." });
+    return;
+  }
+  const name = String(req.body.name || "").trim();
+  const lines = Array.isArray(req.body.lines) ? (req.body.lines as MealLineInput[]) : [];
+  if (!name) {
+    res.status(400).json({ error: "Need a meal set name." });
+    return;
+  }
+  await pool.query(`UPDATE meal_sets SET name = :name WHERE id = :id AND user_id = :userId`, {
+    name,
+    id,
+    userId: USER_ID,
+  });
+  await replaceMealLines(id, lines);
+  res.json(await loadMealSet(id));
+});
+
+app.delete("/api/meal-sets/:id", async (req, res) => {
+  await pool.query(`DELETE FROM meal_sets WHERE id = :id AND user_id = :userId`, {
+    id: Number(req.params.id),
+    userId: USER_ID,
+  });
+  res.json({ ok: true });
+});
+
+app.post("/api/meal-sets/:id/log", async (req, res) => {
+  const meal = req.body.meal;
+  const eatenOn = todayIso(req.body.eatenOn);
+  if (!isMeal(meal)) {
+    res.status(400).json({ error: "Need breakfast, lunch, dinner, or snack." });
+    return;
+  }
+  const loaded = await loadMealSet(Number(req.params.id));
+  if (!loaded) {
+    res.status(404).json({ error: "Meal set not found." });
+    return;
+  }
+  if (loaded.lines.length === 0) {
+    res.status(400).json({ error: "Add at least one ingredient first." });
+    return;
+  }
+  const [result] = await pool.query(
+    `INSERT INTO food_entries (user_id, food_item_id, name, calories, meal, eaten_on)
+     VALUES (:userId, NULL, :name, :calories, :meal, :eatenOn)`,
+    { userId: USER_ID, name: loaded.name, calories: loaded.calories, meal, eatenOn },
+  );
+  res.status(201).json({ id: Number((result as { insertId: number }).insertId), calories: loaded.calories });
+});
+
+async function loadWorkoutSet(id: number) {
+  const [setRows] = await pool.query(
+    `SELECT id, name FROM workout_sets WHERE id = :id AND user_id = :userId`,
+    { id, userId: USER_ID },
+  );
+  const workout = (setRows as Array<Record<string, unknown>>)[0];
+  if (!workout) {
+    return null;
+  }
+  const [lineRows] = await pool.query(
+    `SELECT id, name, calories_burned AS caloriesBurned, sort_order AS sortOrder
+     FROM workout_set_lines
+     WHERE workout_set_id = :id
+     ORDER BY sort_order, id`,
+    { id },
+  );
+  const lines = (lineRows as Array<Record<string, unknown>>).map((row) => ({
+    id: num(row.id),
+    name: String(row.name),
+    caloriesBurned: num(row.caloriesBurned),
+    sortOrder: num(row.sortOrder),
+  }));
+  return {
+    id: num(workout.id),
+    name: String(workout.name),
+    caloriesBurned: lines.reduce((sum, line) => sum + line.caloriesBurned, 0),
+    lines,
+  };
+}
+
+async function replaceWorkoutLines(
+  workoutSetId: number,
+  lines: Array<{ name: string; caloriesBurned: number }>,
+) {
+  await pool.query(`DELETE FROM workout_set_lines WHERE workout_set_id = :id`, { id: workoutSetId });
+  let order = 1;
+  for (const line of lines) {
+    const name = String(line.name || "").trim();
+    const caloriesBurned = Number(line.caloriesBurned) || 0;
+    if (!name) {
+      continue;
+    }
+    await pool.query(
+      `INSERT INTO workout_set_lines (workout_set_id, name, calories_burned, sort_order)
+       VALUES (:workoutSetId, :name, :caloriesBurned, :sortOrder)`,
+      { workoutSetId, name, caloriesBurned, sortOrder: order },
+    );
+    order += 1;
+  }
+}
+
+app.get("/api/workout-sets", async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id FROM workout_sets WHERE user_id = :userId ORDER BY name`,
+    { userId: USER_ID },
+  );
+  const sets = [];
+  for (const row of rows as Array<{ id: number }>) {
+    const loaded = await loadWorkoutSet(num(row.id));
+    if (loaded) {
+      sets.push(loaded);
+    }
+  }
+  res.json({ sets });
+});
+
+app.post("/api/workout-sets", async (req, res) => {
+  const name = String(req.body.name || "").trim();
+  const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (!name) {
+    res.status(400).json({ error: "Need a training set name." });
+    return;
+  }
+  const [result] = await pool.query(
+    `INSERT INTO workout_sets (user_id, name) VALUES (:userId, :name)`,
+    { userId: USER_ID, name },
+  );
+  const id = Number((result as { insertId: number }).insertId);
+  await replaceWorkoutLines(id, lines);
+  res.status(201).json(await loadWorkoutSet(id));
+});
+
+app.put("/api/workout-sets/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await loadWorkoutSet(id);
+  if (!existing) {
+    res.status(404).json({ error: "Training set not found." });
+    return;
+  }
+  const name = String(req.body.name || "").trim();
+  const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (!name) {
+    res.status(400).json({ error: "Need a training set name." });
+    return;
+  }
+  await pool.query(`UPDATE workout_sets SET name = :name WHERE id = :id AND user_id = :userId`, {
+    name,
+    id,
+    userId: USER_ID,
+  });
+  await replaceWorkoutLines(id, lines);
+  res.json(await loadWorkoutSet(id));
+});
+
+app.delete("/api/workout-sets/:id", async (req, res) => {
+  await pool.query(`DELETE FROM workout_sets WHERE id = :id AND user_id = :userId`, {
+    id: Number(req.params.id),
+    userId: USER_ID,
+  });
+  res.json({ ok: true });
+});
+
+app.post("/api/workout-sets/:id/log", async (req, res) => {
+  const doneOn = todayIso(req.body.doneOn);
+  const loaded = await loadWorkoutSet(Number(req.params.id));
+  if (!loaded) {
+    res.status(404).json({ error: "Training set not found." });
+    return;
+  }
+  if (loaded.lines.length === 0) {
+    res.status(400).json({ error: "Add at least one exercise first." });
+    return;
+  }
+  const [result] = await pool.query(
+    `INSERT INTO exercises (user_id, name, calories_burned, done_on)
+     VALUES (:userId, :name, :caloriesBurned, :doneOn)`,
+    { userId: USER_ID, name: loaded.name, caloriesBurned: loaded.caloriesBurned, doneOn },
+  );
+  res.status(201).json({
+    id: Number((result as { insertId: number }).insertId),
+    caloriesBurned: loaded.caloriesBurned,
+  });
 });
 
 app.post("/api/food-entries", async (req, res) => {

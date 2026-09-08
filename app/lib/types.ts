@@ -1,4 +1,5 @@
 export type Meal = "breakfast" | "lunch" | "dinner" | "snack";
+export type Unit = "g" | "piece";
 
 export type FoodEntry = {
   id: number;
@@ -38,6 +39,38 @@ export type FoodItem = {
   id: number;
   name: string;
   calories: number;
+  unit: Unit;
+};
+
+export type MealSetLine = {
+  id: number;
+  foodItemId: number;
+  name: string;
+  amount: number;
+  unit: Unit;
+  calories: number;
+  lineKcal: number;
+};
+
+export type MealSet = {
+  id: number;
+  name: string;
+  calories: number;
+  lines: MealSetLine[];
+};
+
+export type WorkoutSetLine = {
+  id: number;
+  name: string;
+  caloriesBurned: number;
+  sortOrder: number;
+};
+
+export type WorkoutSet = {
+  id: number;
+  name: string;
+  caloriesBurned: number;
+  lines: WorkoutSetLine[];
 };
 
 export type User = {

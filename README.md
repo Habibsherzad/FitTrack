@@ -23,7 +23,7 @@ Do not commit this file.
 1. Open MySQL Workbench and connect locally.
 2. File → Open SQL Script → `database/schema.sql`
 3. Click the lightning bolt to run it.
-4. Refresh the schemas list. You should see database `fittrack` and tables `users`, `food_items`, `food_entries`, `exercises`, `weight_logs`.
+4. Refresh the schemas list. You should see `users`, `food_items`, `food_entries`, `exercises`, `weight_logs`, `meal_sets`, `meal_set_lines`, `workout_sets`, `workout_set_lines`.
 
 **Option B — command line**
 
@@ -70,12 +70,12 @@ Open **Expo Go** and scan the QR code.
 
 ## Check that SQL is real
 
-1. In the app, add a food (example: Oatmeal, 320 kcal, breakfast).
+1. In **Library**, open **Meals**, tap **Morning bowl**, log it to breakfast.
 2. In Workbench, run `database/sample-queries.sql`.
-3. The same meal should appear as a row.
+3. The same meal should appear in `food_entries`. Editing the recipe later does not change that row.
 
 ## Project layout
 
-- `app/` — Expo screens: Today, Add, History, Goals
+- `app/` — Expo screens: Today, Library, History, Goals
 - `server/` — Express + TypeScript, plain SQL in `src/index.ts`
 - `database/` — MySQL schema and practice queries

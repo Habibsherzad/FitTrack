@@ -129,9 +129,9 @@ export default function TodayScreen() {
       ))}
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Exercise</Text>
+        <Text style={styles.sectionTitle}>Training</Text>
         {data.exercises.length === 0 ? (
-          <Text style={styles.empty}>No workouts today</Text>
+            <Text style={styles.empty}>No training logged today</Text>
         ) : (
           data.exercises.map((item) => (
             <Pressable
