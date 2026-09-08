@@ -1,0 +1,40 @@
+# Secrets
+.env
+.env.local
+app/.env
+server/.env
+
+# Dependencies
+node_modules/
+
+# Expo / React Native
+app/.expo/
+app/dist/
+app/web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Native build
+app/ios/Pods/
+app/android/app/build/
+app/android/.gradle/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs and caches
+*.log
+npm-debug.log*
+.cache/
+.turbo/
+
+# TypeScript
+*.tsbuildinfo
+server/dist/
