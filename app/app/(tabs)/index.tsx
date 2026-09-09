@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { api, API_URL } from "@/lib/api";
+import { api, getApiUrl } from "@/lib/api";
 import { colors, mealLabels } from "@/lib/theme";
 import type { Meal, TodayResponse } from "@/lib/types";
 
@@ -63,7 +63,7 @@ export default function TodayScreen() {
       <View style={styles.center}>
         <Text style={styles.errorTitle}>Server not reached</Text>
         <Text style={styles.errorText}>{error}</Text>
-        <Text style={styles.hint}>API: {API_URL}</Text>
+        <Text style={styles.hint}>API: {getApiUrl()}</Text>
         <Pressable style={styles.retry} onPress={load}>
           <Text style={styles.retryText}>Try again</Text>
         </Pressable>

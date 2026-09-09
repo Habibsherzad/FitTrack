@@ -2,6 +2,7 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import { lineCalories } from "./calories";
 import { pool, USER_ID } from "./db";
+import { lookupBarcode, searchCatalog } from "./foodLookup";
 
 const app = express();
 app.use(cors());
@@ -84,14 +85,14 @@ app.get("/api/today", async (req, res) => {
       { id: USER_ID },
     ),
     pool.query(
-      `SELECT id, name, calories, meal, eaten_on AS eatenOn, food_item_id AS foodItemId
+      `SELECT id, name, calories, meal, DATE_FORMAT(eaten_on, '%Y-%m-%d') AS eatenOn, food_item_id AS foodItemId
        FROM food_entries
        WHERE user_id = :id AND eaten_on = :date
        ORDER BY id`,
       { id: USER_ID, date },
     ),
     pool.query(
-      `SELECT id, name, calories_burned AS caloriesBurned, done_on AS doneOn
+      `SELECT id, name, calories_burned AS caloriesBurned, DATE_FORMAT(done_on, '%Y-%m-%d') AS doneOn
        FROM exercises
        WHERE user_id = :id AND done_on = :date
        ORDER BY id`,
@@ -151,7 +152,7 @@ app.get("/api/history", async (req, res) => {
   const days = Math.min(31, Math.max(1, Number(req.query.days) || 14));
   const [rows] = await pool.query(
     `SELECT
-        d.day_date AS date,
+        DATE_FORMAT(d.day_date, '%Y-%m-%d') AS date,
         u.calorie_goal AS calorieGoal,
         COALESCE(f.food_calories, 0) AS foodCalories,
         COALESCE(e.exercise_calories, 0) AS exerciseCalories
@@ -214,6 +215,40 @@ function mapProduct(row: Record<string, unknown>) {
     unit,
   };
 }
+
+app.get("/api/foods/search", async (req, res) => {
+  const query = String(req.query.q || "").trim();
+  if (query.length < 2) {
+    res.status(400).json({ error: "Type at least 2 letters to search." });
+    return;
+  }
+  try {
+    const results = await searchCatalog(query);
+    res.json({ results });
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "USDA search is unavailable right now. Try again in a minute." });
+  }
+});
+
+app.get("/api/foods/barcode/:code", async (req, res) => {
+  const code = String(req.params.code || "").replace(/\D/g, "");
+  if (!/^\d{8,14}$/.test(code)) {
+    res.status(400).json({ error: "Need an 8–14 digit barcode." });
+    return;
+  }
+  try {
+    const item = await lookupBarcode(code);
+    if (!item) {
+      res.status(404).json({ error: "No nutrition data for that barcode." });
+      return;
+    }
+    res.json({ item });
+  } catch (error) {
+    console.error(error);
+    res.status(502).json({ error: "Barcode lookup is unavailable right now." });
+  }
+});
 
 app.get("/api/food-items", async (_req, res) => {
   const [rows] = await pool.query(
@@ -646,7 +681,7 @@ app.delete("/api/exercises/:id", async (req, res) => {
 
 app.get("/api/weight-logs", async (_req, res) => {
   const [rows] = await pool.query(
-    `SELECT id, weight_kg AS weightKg, logged_on AS loggedOn
+    `SELECT id, weight_kg AS weightKg, DATE_FORMAT(logged_on, '%Y-%m-%d') AS loggedOn
      FROM weight_logs
      WHERE user_id = :id
      ORDER BY logged_on DESC, id DESC

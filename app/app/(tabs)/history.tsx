@@ -6,7 +6,13 @@ import { colors } from "@/lib/theme";
 import type { HistoryDay } from "@/lib/types";
 
 function prettyDate(iso: string): string {
-  const date = new Date(`${iso}T00:00:00`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    return iso;
+  }
+  const date = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
   return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 

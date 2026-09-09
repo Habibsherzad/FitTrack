@@ -1,4 +1,7 @@
+import Constants from "expo-constants";
+import { Platform } from "react-native";
 import type {
+  CatalogFood,
   FoodItem,
   HistoryDay,
   Meal,
@@ -10,7 +13,21 @@ import type {
   WorkoutSet,
 } from "./types";
 
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://192.168.178.75:3000";
+export function getApiUrl(): string {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return `http://${window.location.hostname}:3000`;
+  }
+
+  const hostUri = Constants.expoConfig?.hostUri ?? "";
+  const host = hostUri.replace(/^[a-z]+:\/\//i, "").split(":")[0].split("/")[0];
+  if (host && host !== "http" && host !== "https") {
+    return `http://${host}:3000`;
+  }
+
+  return "http://localhost:3000";
+}
+
+export const API_URL = getApiUrl();
 
 export function localDate(): string {
   const now = new Date();
@@ -19,15 +36,21 @@ export function localDate(): string {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method || "GET").toUpperCase();
+  const headers: Record<string, string> = { ...(options?.headers as Record<string, string> | undefined) };
+  if (method !== "GET" && method !== "HEAD") {
+    headers["Content-Type"] = "application/json";
+  }
+
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, {
-      headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+    response = await fetch(`${getApiUrl()}${path}`, {
       ...options,
+      headers,
     });
   } catch {
     throw new Error(
-      `Cannot reach the server at ${API_URL}. Is the server running, and is the phone on the same Wi-Fi?`,
+      `Cannot reach the server at ${getApiUrl()}. Is the server running, and is the phone on the same Wi-Fi?`,
     );
   }
 
@@ -41,6 +64,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   today: (date = localDate()) => request<TodayResponse>(`/api/today?date=${date}`),
   history: () => request<{ history: HistoryDay[] }>("/api/history?days=14"),
+  searchFoods: (query: string) =>
+    request<{ results: CatalogFood[] }>(`/api/foods/search?q=${encodeURIComponent(query)}`),
+  lookupBarcode: (code: string) =>
+    request<{ item: CatalogFood }>(`/api/foods/barcode/${encodeURIComponent(code)}`),
   foodItems: () => request<{ items: FoodItem[] }>("/api/food-items"),
   addFoodItem: (name: string, calories: number, unit: Unit) =>
     request<{ id: number }>("/api/food-items", {

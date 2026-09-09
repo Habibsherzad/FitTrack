@@ -42,6 +42,14 @@ export type FoodItem = {
   unit: Unit;
 };
 
+export type CatalogFood = {
+  name: string;
+  calories: number;
+  unit: "g";
+  source: "usda" | "openfoodfacts";
+  sourceId: string;
+};
+
 export type MealSetLine = {
   id: number;
   foodItemId: number;

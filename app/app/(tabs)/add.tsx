@@ -15,6 +15,7 @@ import { api } from "@/lib/api";
 import { lineCalories, unitLabel } from "@/lib/calories";
 import { colors, mealLabels } from "@/lib/theme";
 import type { FoodItem, Meal, MealSet, Unit, WorkoutSet } from "@/lib/types";
+import FoodSearch from "@/components/FoodSearch";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 type LibraryMode = "products" | "meals" | "training";
@@ -241,6 +242,18 @@ export default function AddScreen() {
 
         {mode === "products" ? (
           <>
+            <FoodSearch
+              products={products}
+              disabled={busy}
+              onImported={(item) => {
+                setProductId(item.id);
+                setProductName(item.name);
+                setProductKcal(String(item.calories));
+                setProductUnit(item.unit);
+                setLogAmount(item.unit === "g" ? "100" : "1");
+                load();
+              }}
+            />
             <Text style={styles.label}>Product name</Text>
             <TextInput value={productName} onChangeText={setProductName} placeholder="Egg" placeholderTextColor={colors.muted} style={styles.input} />
             <Text style={styles.label}>{unitLabel(productUnit)}</Text>
